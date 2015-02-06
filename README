@@ -1,0 +1,2 @@
+Vagrantfile and Ansible playbook to install Proxmox VE.
+Based on https://github.com/dpausp/ansible-playbook-pve
