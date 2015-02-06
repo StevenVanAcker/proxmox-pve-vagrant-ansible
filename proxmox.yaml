@@ -1,0 +1,158 @@
+---
+# install proxmox VE
+#
+
+- name: install proxmox VE
+  hosts: all
+  sudo: yes
+
+  vars:
+    - hostname: proxmoxtest
+
+  tasks:
+    - name: add the Proxmox VE repository
+      lineinfile: "state=present dest=/etc/apt/sources.list
+      regexp='^deb http://download.proxmox.com'
+      line='deb http://download.proxmox.com/debian wheezy pve'"
+
+    - name: add the Proxmox VE repository key
+      apt_key: url=http://download.proxmox.com/debian/key.asc state=present
+
+    - name: run sysupgrade
+      apt: update_cache=yes upgrade=dist
+     
+    - name: install proxmox VE firmware
+      apt: pkg=pve-firmware state=latest
+
+    # only when this is changed, do the rest
+    - name: install proxmox VE kernel
+      apt: pkg=pve-kernel-2.6.32-26-pve state=latest
+      register: kernelupdate
+
+    - name: set default boot to VE kernel
+      lineinfile: "state=present dest=/etc/default/grub
+      regexp='^GRUB_DEFAULT='
+      line=GRUB_DEFAULT=2"
+
+    - name: update grub
+      command: update-grub
+      when: kernelupdate.changed
+
+    # is this needed?
+    - name: setup IPV4 forwarding for NAT
+      lineinfile: "state=present dest=/etc/sysctl.conf
+      regexp='^#?net.ipv4.ip_forward'
+      line=net.ipv4.ip_forward=1"
+      tags:
+        - nat
+
+    - name: make sure our hostname is in /etc/hostname
+      copy: dest=/etc/hostname content='{{ hostname }}' owner=root group=root mode=0644
+      tags:
+        - fixhostname
+
+    - name: our hostname and IP address should appear once in /etc/hosts
+      shell: grep -- '^{{ ansible_eth0["ipv4"]["address"] }} {{ hostname }}' /etc/hosts |wc -l
+      register: hostnamecount
+      changed_when: not hostnamecount.stdout == "1"
+      tags:
+        - fixhostname
+
+    - name: make sure our hostname does not appear in /etc/hosts
+      lineinfile: dest=/etc/hosts state=absent regexp='{{ hostname }}'
+      when: not hostnamecount.stdout == "1"
+      tags:
+        - fixhostname
+
+    - name: make sure our ip address does not appear in /etc/hosts
+      lineinfile: dest=/etc/hosts state=absent regexp='{{ ansible_eth0["ipv4"]["address"] }}'
+      when: not hostnamecount.stdout == "1"
+      tags:
+        - fixhostname
+
+    - name: make sure our hostname is set in /etc/hosts as the ONLY line
+      lineinfile: dest=/etc/hosts line='{{ ansible_eth0["ipv4"]["address"] }} {{ hostname }}'
+      when: not hostnamecount.stdout == "1"
+      tags:
+        - fixhostname
+
+    - name: reboot machine
+      command: /sbin/reboot -t now
+      when: kernelupdate.changed
+
+    - name: wait until SSH becomes ready...
+      local_action: wait_for host={{ ansible_ssh_host }} port={{ ansible_ssh_port }} state=started search_regex=OpenSSH timeout=120 delay=20
+      sudo: no
+      when: kernelupdate.changed
+
+    - name: is it running?
+      command: uptime
+      when: kernelupdate.changed
+      changed_when: false
+
+    - name: install dependency packages for PVE
+      apt: pkg={{ item }} state=present
+      with_items:
+        - ntp 
+        - ssh
+        - lvm2
+        - postfix 
+        - ksm-control-daemon 
+        - vzprocps 
+        - open-iscsi 
+        - bootlogd
+      tags:
+        - after-reboot
+
+    - name: install packages for PVE
+      apt: pkg=proxmox-ve-2.6.32 state=present
+      register: pveinstall
+      tags:
+        - after-reboot
+    
+    # this repo is 401, stupid pve-manager bug probably?
+    - name: remove pve-enterprise repo
+      file: path=/etc/apt/sources.list.d/pve-enterprise.list state=absent
+      when: pveinstall.changed
+      tags:
+        - after-reboot
+
+    - name: user credentials exist?
+      stat: path=/etc/pve/user.cfg
+      register: creds
+      tags:
+        - after-reboot
+        - default-credentials
+
+    - name: configure a default admin user (admin/admin using PVE server authn)
+      copy: src=default.user.cfg
+            dest=/root/user.cfg
+            owner=root group=www-data mode=0640
+      when: not creds.stat.exists
+      tags:
+        - after-reboot
+        - default-credentials
+
+    - name: configure a default admin user password (admin/admin using PVE server authn)
+      copy: src=default.shadow.cfg
+            dest=/root/shadow.cfg
+            owner=root group=www-data mode=0600
+      when: not creds.stat.exists
+      tags:
+        - after-reboot
+        - default-credentials
+
+    # these are because of /etc/pve being a fuse mount...
+    - name: move user.cfg to the correct place
+      command: mv /root/user.cfg /etc/pve/user.cfg
+      when: not creds.stat.exists
+      tags:
+        - after-reboot
+        - default-credentials
+    - name: move shadow.cfg to the correct place
+      command: mv /root/shadow.cfg /etc/pve/priv/shadow.cfg
+      when: not creds.stat.exists
+      tags:
+        - after-reboot
+        - default-credentials
+
