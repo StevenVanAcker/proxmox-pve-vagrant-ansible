@@ -81,7 +81,7 @@
       when: kernelupdate.changed
 
     - name: wait until SSH becomes ready...
-      local_action: wait_for host={{ ansible_ssh_host }} port={{ ansible_ssh_port }} state=started search_regex=OpenSSH timeout=120 delay=20
+      local_action: wait_for host={{ inventory_hostname }} port={{ ansible_ssh_port }} state=started search_regex=OpenSSH timeout=120 delay=20
       sudo: no
       when: kernelupdate.changed
 
