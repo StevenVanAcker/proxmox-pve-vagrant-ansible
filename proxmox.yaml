@@ -13,7 +13,7 @@
     - name: add the Proxmox VE repository
       lineinfile: "state=present dest=/etc/apt/sources.list
       regexp='^deb http://download.proxmox.com'
-      line='deb http://download.proxmox.com/debian wheezy pve'"
+      line='deb http://download.proxmox.com/debian wheezy pve pve-no-subscription'"
 
     - name: add the Proxmox VE repository key
       apt_key: url=http://download.proxmox.com/debian/key.asc state=present
@@ -26,13 +26,13 @@
 
     # only when this is changed, do the rest
     - name: install proxmox VE kernel
-      apt: pkg=pve-kernel-2.6.32-26-pve state=latest
+      apt: pkg=pve-kernel-3.10.0-5-pve state=latest
       register: kernelupdate
 
     - name: set default boot to VE kernel
       lineinfile: "state=present dest=/etc/default/grub
       regexp='^GRUB_DEFAULT='
-      line=GRUB_DEFAULT=2"
+      line=GRUB_DEFAULT=0"
 
     - name: update grub
       command: update-grub
@@ -75,6 +75,10 @@
       when: not hostnamecount.stdout == "1"
       tags:
         - fixhostname
+
+    - name: make sure grub is installed...
+      command: grub-install /dev/sda
+      when: kernelupdate.changed
 
     - name: reboot machine
       command: /sbin/reboot -t now
